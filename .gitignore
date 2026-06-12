@@ -1,0 +1,12 @@
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Python caches (the bundled assets are templates, but ignore any stray builds)
+__pycache__/
+*.py[cod]
+
+# Never commit a real .env if one is ever created here (templates use .env.example)
+.env

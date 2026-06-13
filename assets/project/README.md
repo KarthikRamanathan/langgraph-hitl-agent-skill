@@ -49,8 +49,11 @@ copy .env.example .env        # then paste your ANTHROPIC_API_KEY
 ## Run
 
 ```powershell
-# Start a new session
+# Start a new session (local task)
 python main.py --session demo "create hello.py that prints Hello World, then run it"
+
+# A web task — reads the LIVE page via Playwright/MCP, then writes
+python main.py --session web "save the title and first paragraph of https://example.com to summary.txt"
 
 # Resume a paused session (no task needed — it remembers)
 python main.py --session demo
@@ -62,12 +65,18 @@ python main.py --session demo --inspect "..."
 You'll see the plan, the reflection, then an **approve / reject** prompt before
 anything is written or executed. Everything happens inside `./workspace`.
 
+> **Web access** needs Node.js + `npx` (for the `@playwright/mcp` server). The agent
+> reads a JS-rendered accessibility snapshot of the page — shell fetches (`curl`, etc.)
+> are deliberately blocked so all web access goes through the browser.
+
 ## Exercises (learn by extending)
 - **Edit-on-approval**: let the human type an edited action instead of just
   approve/reject (pass a dict through `Command(resume=...)`).
 - **Time-travel**: re-invoke from an older `checkpoint_id` to rewind and branch.
-- **Add Playwright/MCP**: turn `gather` into a real browser tool via an MCP server,
-  so the agent can read live web pages. The graph doesn't change — only `tools.py`.
+- **Cleaner page text**: have `browser.py` call `browser_evaluate` for
+  `document.body.innerText` instead of the accessibility snapshot.
+- **Another MCP server**: point `browser.py` at a different MCP server (filesystem,
+  GitHub) — the async→sync bridge and node stay the same.
 - **Visualize**: `app.get_graph().draw_mermaid()` prints the diagram above.
 - **Auto-approve safe actions**: route read-only commands straight to `execute`,
   only interrupt for writes.

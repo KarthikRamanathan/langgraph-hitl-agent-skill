@@ -25,21 +25,24 @@ class Plan(BaseModel):
     )
 
 
-class ProposedAction(BaseModel):
-    """The single concrete action the Reflector wants to take next."""
-    action: Literal["write_file", "run_command", "finish"]
-    path: Optional[str] = Field(None, description="For write_file: workspace-relative path.")
-    content: Optional[str] = Field(None, description="For write_file: full new file contents.")
-    command: Optional[str] = Field(None, description="For run_command: the shell command.")
-    rationale: str = Field(description="One sentence: why this action, now.")
-
-
 class Reflection(BaseModel):
-    """Reflector node output."""
+    """Reflector node output — ONE flat 'action' enum that matches how the model thinks.
+
+    LESSON: design the schema around the model's mental model. We first split intents
+    (booleans next_read/next_browse for reading, an enum for write/run/finish). The model
+    kept wanting to express browsing as an action and emitted action='browse' — not in the
+    enum — which hard-crashed structured output. Unifying every intent (browse, read_file,
+    write_file, run_command, finish) into a SINGLE flat enum removes that whole class of
+    mismatch. Flat + unified + matches-the-model = reliable.
+    """
     summary: str = Field(description="What's been done so far and what's left.")
-    need_more_context: bool = Field(description="True if you must read more files before acting.")
-    next_read: Optional[str] = Field(None, description="If need_more_context: one path to read next.")
-    proposed_action: ProposedAction
+    action: Literal["browse", "read_file", "write_file", "run_command", "finish"] = Field(
+        description="The ONE next action to take.")
+    url: Optional[str] = Field(None, description="For browse: the full http(s) URL of the live page.")
+    path: Optional[str] = Field(None, description="For read_file / write_file: workspace-relative path.")
+    content: Optional[str] = Field(None, description="For write_file: the full new file contents.")
+    command: Optional[str] = Field(None, description="For run_command: the local shell command.")
+    rationale: str = Field(description="One sentence: why this action, now.")
 
 
 # --- The graph state ---------------------------------------------------------

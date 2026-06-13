@@ -79,3 +79,64 @@ the smaller/cheaper the model.
 - Walk `app.get_state_history(config)` and compare consecutive snapshots. The checkpoint
   where the world changed but the model's context didn't is the culprit.
 - Ask: "what does the model *see* at this node, and does it match what's true on disk?"
+
+---
+
+# Reliability lessons (structured output + cheaper models)
+
+These surfaced while making the agent run on **Haiku**. Bigger models (Sonnet/Opus)
+hide several of these, but the fixes are strictly better and cost nothing — and they
+teach how structured-output agents actually behave.
+
+## 1. Flatten the schema
+
+`.with_structured_output(Model)` is implemented via tool-calling. Small models reliably
+fill **flat** fields but **mangle nested objects** — we nested a `ProposedAction` inside
+`Reflection` and got a `ValidationError` with leaked `<parameter name=...>` XML in the
+inner field. Fix: pull every field to the top level. **Rule: flatten the schemas you
+hand to cheaper models.**
+
+## 2. Unify around the model's mental model
+
+We first split intents: booleans (`next_read`, `next_browse`) for reading, an `action`
+enum (`write_file/run_command/finish`) for acting. The model doesn't think that way — it
+thinks "my next move is *browse*" — so it put `action="browse"` (not in the enum) and
+hard-crashed. Fix: ONE `action` enum covering every intent
+(`browse/read_file/write_file/run_command/finish`) with the fields each needs. **Rule:
+design the schema around how the model reasons, not your code's internal categories.**
+
+## 3. Enforce mandatory steps in code, not prompts
+
+The model kept side-stepping the prompt — it `curl`ed the page, or `cat`-ed a stale file
+to "verify" and then declared done. Prompts are probabilistic; persuasion isn't enough
+for steps that MUST happen. Two structural enforcements fixed it:
+- **Web-fetch block** in `tools.run_command` — refuses `curl`/`wget`/`requests`/… and
+  redirects to the `browse` action. The wrong path is impossible.
+- **Browse-first guard** in `reflect` — a URL in the task that hasn't been browsed THIS
+  run overrides the model's choice to `action="browse"`.
+
+**Rule: persuade with the prompt, but enforce anything mandatory in code.**
+
+## 4. Provenance over ambient state
+
+The reflector saw a pre-existing `summary.txt` and declared the task done — but that file
+was a stale artifact from an earlier run (one of which had saved the *wrong* content).
+Fix: "done" means **an action YOU took this run** (it's in `past_steps`), not "a file with
+plausible content exists." For web-sourced tasks, require a live browse this run before
+writing/finishing. **Rule: ground completion in this-run provenance, not disk state of
+unknown origin.**
+
+## 5. Change-aware (idempotent) writes
+
+After browsing, re-saving identical content is wasted work — and silently finishing
+without writing is confusing ("did it do anything?"). Fix: `execute` md5-compares the
+proposed content against what's on disk; if identical it SKIPS the write and logs
+`✓ unchanged — … (md5 …)`. Visible, idempotent, verified. **Rule: make "nothing to do"
+an explicit, logged outcome — and hash to detect it.**
+
+## The through-line
+
+Lessons 1–2 are about **schema design** (match the model). Lessons 3–4 are about **trust**
+(enforce structurally; trust provenance, not ambient state). Lesson 5 is about **honest,
+idempotent side effects**. Together they're what turns a demo that works on Opus into an
+agent that's reliable on a cheap, fast model.

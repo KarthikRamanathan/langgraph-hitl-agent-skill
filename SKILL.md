@@ -19,8 +19,8 @@ description: >-
 A complete, teaching-oriented reference for building an agent with this architecture:
 
 ```
-Claude  →  Planner  →  Tools (gather)  →  Reflector  →  Human Approval  →  Execution
-                          ↑__________________________________________________|
+Claude → Planner → Tools (gather files / browse web) → Reflector → Human Approval → Execution
+                       ↑________________________________________________________________|
                                         (loop until done)
 ```
 
@@ -48,7 +48,8 @@ This mapping IS the core lesson — internalize it and teach it.
 |---|---|---|
 | Claude / the LLM "brain" | `ChatAnthropic` client | `nodes.py` |
 | Planner | a **node** + `.with_structured_output(Plan)` | `nodes.py` |
-| Tools (Playwright/MCP/files) | a read-only **node** (`gather`) + tool fns | `nodes.py`, `tools.py` |
+| Tools — local files | read-only **node** (`gather`) + `tools.py` fns | `nodes.py`, `tools.py` |
+| Tools — live web (Playwright/MCP) | read-only **node** (`browse`) driving an MCP server | `nodes.py`, `browser.py` |
 | Reflector | a **node** that proposes ONE action | `nodes.py` |
 | Human Approval | **`interrupt()`** + a checkpointer | `nodes.py`, `graph.py` |
 | Execution | the only side-effecting **node** | `nodes.py` |
@@ -76,12 +77,14 @@ This mapping IS the core lesson — internalize it and teach it.
 
 ```
 config.py        # model, sandbox dir, MAX_STEPS, STATE_DB path, key check
-state.py         # AgentState TypedDict + Plan/Reflection/ProposedAction models
-tools.py         # sandboxed read_file/write_file/run_command/list_dir
-nodes.py         # planner, gather, reflect, human_approval, execute + routers
+state.py         # AgentState TypedDict + Plan + flat unified-action Reflection model
+tools.py         # sandboxed read_file/write_file/run_command/list_dir (+ web-fetch block)
+browser.py       # live web access via Playwright MCP — backs the browse node
+nodes.py         # planner, gather, browse, reflect, human_approval, execute + routers
 graph.py         # build_graph(): wires nodes/edges + attaches the checkpointer
 main.py          # CLI driver: the interrupt→approve→resume loop + checkpoint inspector
-requirements.txt # langgraph, langgraph-checkpoint-sqlite, langchain-anthropic, dotenv
+requirements.txt # langgraph, langgraph-checkpoint-sqlite, langchain-anthropic,
+                 #   langchain-mcp-adapters, dotenv
 .env.example     # ANTHROPIC_API_KEY
 README.md        # setup + exercises
 workspace/       # the sandbox the agent is allowed to touch
@@ -129,6 +132,23 @@ Concretely in this project: `execute` re-reads the file it just wrote back into
 not repeat a succeeded action and to choose `finish` when the goal is already met.
 Full write-up with before/after in `references/lessons.md`.
 
+## Reliability lessons (structured output + cheaper models)
+
+Hard-won while making this run on Haiku — each is in `references/lessons.md`:
+1. **Flatten schemas.** `.with_structured_output()` uses tool-calling; small models
+   mangle NESTED objects. Keep every field top-level.
+2. **Unify around the model's mental model.** Don't scatter intents across mismatched
+   fields (a boolean for "read", an enum for "act") — the model jams the wrong value
+   into the enum and crashes. One `action` enum (`browse/read_file/write_file/
+   run_command/finish`) is what the model actually wants.
+3. **Enforce mandatory steps in code, not prompts.** Prompts are probabilistic. The
+   web-fetch block in `tools.py` and the "must browse the task URL this run" guard in
+   `reflect` make the architecture structural, so it holds regardless of model.
+4. **Provenance over ambient state.** "Done" means "an action I took THIS run"
+   (in `past_steps`), not "a file with the right-ish content exists on disk."
+5. **Change-aware writes.** `execute` md5-compares new vs on-disk content and SKIPS
+   identical writes with a visible `✓ unchanged` — idempotent and never silent.
+
 ## Extending it (the usual next steps)
 
 - **Persistence across restarts** — swap `MemorySaver` for `SqliteSaver` and use a
@@ -145,14 +165,19 @@ Full write-up with before/after in `references/lessons.md`.
   explore an alternate path. (LangGraph keeps every checkpoint.)
 - **Auto-approve safe actions** — route read-only commands straight to `execute` and
   only `interrupt()` for writes.
-- **Real tools** — turn `gather` into a Playwright/MCP browser tool. The graph is
-  unchanged; only `tools.py` grows. This is the seam where "Playwright/MCP tools"
-  from the original diagram plugs in.
+- **Live web via Playwright/MCP — IMPLEMENTED.** The `browse` node drives Microsoft's
+  `@playwright/mcp` server through `langchain-mcp-adapters`. This is where the
+  "Playwright/MCP tools" box from the original diagram plugs in, and it generalizes to
+  ANY MCP server. Full write-up in `references/mcp-tools.md`.
 - **Production checkpointer** — `PostgresSaver` instead of SQLite; same interface.
 
 ## Reference files
-- `references/lessons.md` — the stale-context double-approval bug, in depth, plus the
-  general agent-design principles it teaches.
+- `references/lessons.md` — the stale-context double-approval bug AND the five
+  reliability lessons (flatten, unify, enforce-in-code, provenance, change-aware writes),
+  each with before/after and the general principle.
 - `references/checkpointing.md` — how checkpointing/persistence actually works:
   super-steps, `thread_id`, MemorySaver vs SqliteSaver, resume-on-restart, inspection,
   and the SQLite tables LangGraph creates.
+- `references/mcp-tools.md` — live web access via Playwright over MCP: spawning the
+  server, `MultiServerMCPClient` + `load_mcp_tools`, the async→sync bridge, the `browse`
+  node, and the deterministic browse guard + web-fetch block that enforce it.

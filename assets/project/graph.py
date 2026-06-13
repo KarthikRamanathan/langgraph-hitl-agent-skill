@@ -26,6 +26,7 @@ def build_graph():
     # Register nodes.
     g.add_node("planner", nodes.planner)
     g.add_node("gather", nodes.gather)
+    g.add_node("browse", nodes.browse)
     g.add_node("reflect", nodes.reflect)
     g.add_node("human_approval", nodes.human_approval)
     g.add_node("execute", nodes.execute)
@@ -35,12 +36,15 @@ def build_graph():
     g.add_edge("planner", "gather")
     g.add_edge("gather", "reflect")
 
-    # Reflect branches three ways.
+    # Reflect branches: fetch a web page, read a local file, act, or stop.
     g.add_conditional_edges(
         "reflect",
         nodes.route_after_reflect,
-        {"gather": "gather", "approval": "human_approval", "end": END},
+        {"browse": "browse", "gather": "gather", "approval": "human_approval", "end": END},
     )
+
+    # After browsing a live page, go straight back to reflect with the new context.
+    g.add_edge("browse", "reflect")
 
     # Approval always proceeds to execute (execute decides what to do with the
     # decision — apply it or record a skip). Keeps the graph simple.

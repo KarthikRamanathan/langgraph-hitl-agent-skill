@@ -6,6 +6,7 @@ MCP server such as Playwright — the graph doesn't change, only this file does.
 """
 import subprocess
 from pathlib import Path
+from typing import Optional
 
 from config import WORKSPACE
 
@@ -36,6 +37,15 @@ def read_file(path: str) -> str:
     return p.read_text(encoding="utf-8", errors="replace")
 
 
+def read_text_if_exists(path: str) -> Optional[str]:
+    """Return the file's contents, or None if it doesn't exist (no sentinel string).
+    Used by the change-aware write to compare against what's already on disk."""
+    p = _safe(path)
+    if not p.exists():
+        return None
+    return p.read_text(encoding="utf-8", errors="replace")
+
+
 def write_file(path: str, content: str) -> str:
     """SIDE-EFFECTING. Only called from the execute node, after human approval."""
     p = _safe(path)
@@ -44,8 +54,20 @@ def write_file(path: str, content: str) -> str:
     return f"wrote {len(content)} chars to {path}"
 
 
+# Commands that fetch from the network. We block these so the agent can't bypass
+# the browser node — web access must go through the 'browse' action (Playwright/MCP),
+# which renders JS. This enforces the architecture rather than trusting the prompt alone.
+_WEB_FETCH_TOKENS = ("curl", "wget", "invoke-webrequest", "iwr", "invoke-restmethod",
+                     "requests.get", "urllib", "httpx", "system.net.webclient")
+
+
 def run_command(command: str) -> str:
     """SIDE-EFFECTING. Runs inside the workspace dir. Approval-gated."""
+    low = command.lower()
+    if any(tok in low for tok in _WEB_FETCH_TOKENS):
+        return ("[blocked: this command fetches from the web. Use the 'browse' action with "
+                "the url instead — web access goes through the Playwright/MCP browser, which "
+                "renders JavaScript. Shell-based fetching is disabled here.]")
     try:
         proc = subprocess.run(
             command, shell=True, cwd=WORKSPACE, capture_output=True,

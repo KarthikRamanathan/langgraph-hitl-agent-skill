@@ -50,6 +50,37 @@ The takeaway: **swap the server config and the same few lines reach an entirely
 different tool.** That's why it's "USB-C for AI tools" rather than soldering a custom
 cable per device.
 
+## How the server actually runs (process model)
+
+With `transport: "stdio"`, the MCP server is a **local child process our Python process
+spawns**. The client runs `npx @playwright/mcp@latest --headless` and talks to it over
+the child's **stdin/stdout** (JSON-RPC) — no network, no ports, just pipes. There are
+really two spawned processes: the Node server, and the Chromium instance IT launches.
+
+```
+python  (your agent)                  ← parent
+  └─ npx → node @playwright/mcp        ← the MCP SERVER (child, via stdio)
+        └─ Chromium (headless)         ← the browser the server drives (grandchild)
+```
+
+**Lifecycle (and a cost):** in `browser.py` each `fetch_page()` does
+`asyncio.run(_fetch(...))`, and `_fetch` opens `client.session(...)` in a `with` block.
+So the server + browser are spawned when the session opens and **killed when the block
+exits — once per browse call.** That's why the first browse is slow (npx resolves the
+package, Chromium boots) and why Windows may print a harmless `Event loop is closed`
+warning during teardown.
+
+**Making it persistent:** hold one long-lived session across calls instead of one-per-
+fetch — spawn the server once, reuse it for many navigations (faster, and it can keep
+browser state like cookies / a logged-in session). The trade-off: you now own the
+process lifecycle, and you can't put that connection in graph state (not serializable),
+so keep it in a module-level singleton.
+
+**stdio vs http/sse:** stdio = a **local child you spawn** (zero infra, just `npx`, but
+spawn-per-call unless kept alive). An `http`/`sse` transport with a URL is the opposite:
+a **separate, already-running service you dial** (possibly on another machine). Same
+`load_mcp_tools` interface either way — only "who owns the process" changes.
+
 ## The async→sync bridge (the clever bit)
 
 MCP calls are async, but the graph and `main.py` stay fully **synchronous**. The

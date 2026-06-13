@@ -14,6 +14,42 @@ the web-browsing specifically.
 
 Prerequisites: Node.js + `npx` on PATH; `pip install langchain-mcp-adapters`.
 
+## Mental model: "USB-C for AI tools"
+
+```
+              calls tool(args)
+ ┌────────────┐ ───────────────►  ┌──────────────────────────────┐  ◄─MCP─ ┌──────────────────┐
+ │ Your Agent │                   │       the MCP adapter        │  ◄─MCP─ │ Playwright (Node) │
+ │  Python /  │                   │ MultiServerMCPClient = port  │  ◄─MCP─ │ Filesystem        │
+ │  LangGraph │ ◄───────────────  │ load_mcp_tools      = driver │  ◄─MCP─ │ GitHub            │
+ └────────────┘   native tools    └──────────────────────────────┘  ◄─MCP─ │ Postgres          │
+                                    write once · reuse anywhere             └──────────────────┘
+                                                              servers advertise their tools at runtime
+```
+
+Your agent never talks to a tool directly — it only calls into the **adapter**.
+`MultiServerMCPClient` is the *port* (it manages each connection/transport);
+`load_mcp_tools` is the *driver* (it discovers what a server offers and hands your
+agent native callable tools). Any number of tool servers plug into that one port.
+
+### Why this is significant
+- **Runtime discovery** — you never hardcode a tool or its arg schema; the server
+  *advertises* them, and the adapter builds the Python interface from that.
+- **Process & language isolation** — `@playwright/mcp` is Node, your agent is Python;
+  they share nothing but the MCP wire. Tool providers ship independently, in any language.
+- **One uniform interface** — the *same* `MultiServerMCPClient` + `load_mcp_tools` code
+  reaches any MCP server (filesystem, GitHub, Postgres, Slack, …). Learn it once, get the
+  whole ecosystem.
+- **Composition** — register several servers in one client and the toolsets merge;
+  capabilities snap together like Lego instead of bespoke glue per integration.
+- **Bridges protocol ↔ framework** — once loaded, a remote tool is a LangChain
+  `StructuredTool` you can either bind to the LLM (autonomous tool-calling) OR call by
+  hand inside a node — which is what we do, so the browser stays behind the human gate.
+
+The takeaway: **swap the server config and the same few lines reach an entirely
+different tool.** That's why it's "USB-C for AI tools" rather than soldering a custom
+cable per device.
+
 ## The async→sync bridge (the clever bit)
 
 MCP calls are async, but the graph and `main.py` stay fully **synchronous**. The

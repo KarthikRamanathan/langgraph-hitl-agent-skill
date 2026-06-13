@@ -30,7 +30,8 @@ reflector_llm = llm.with_structured_output(Reflection)
 def planner(state: AgentState) -> dict:
     tree = tools.list_dir()
     prompt = (
-        "You are the PLANNER for a coding assistant working in a sandboxed workspace.\n"
+        "You are the PLANNER for a task assistant working in a sandboxed workspace. "
+        "You can edit files, run local commands, and browse the live web.\n"
         f"Workspace contents:\n{tree}\n\n"
         f"User task:\n{state['task']}\n\n"
         "Produce a short ordered plan of concrete steps, and list any existing "
